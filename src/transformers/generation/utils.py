@@ -1157,6 +1157,7 @@ class GenerationMixin:
         synced_gpus: Optional[bool] = None,
         assistant_model: Optional["PreTrainedModel"] = None,
         streamer: Optional["BaseStreamer"] = None,
+        stopped: Optional[List[bool]] = None,
         **kwargs,
     ) -> Union[GenerateOutput, torch.LongTensor]:
         r"""
@@ -1529,6 +1530,7 @@ class GenerationMixin:
                 return_dict_in_generate=generation_config.return_dict_in_generate,
                 synced_gpus=synced_gpus,
                 streamer=streamer,
+                stopped=stopped,
                 **model_kwargs,
             )
 
@@ -2182,6 +2184,7 @@ class GenerationMixin:
         return_dict_in_generate: Optional[bool] = None,
         synced_gpus: bool = False,
         streamer: Optional["BaseStreamer"] = None,
+        stopped: Optional[List[bool]] = None,
         **model_kwargs,
     ) -> Union[GreedySearchOutput, torch.LongTensor]:
         r"""
@@ -2395,6 +2398,9 @@ class GenerationMixin:
                 # stop when each sentence is finished
                 if unfinished_sequences.max() == 0:
                     this_peer_finished = True
+
+            if stopped is not None and stopped[0]:
+                this_peer_finished = True
 
             # stop if we exceed the maximum length
             if stopping_criteria(input_ids, scores):
