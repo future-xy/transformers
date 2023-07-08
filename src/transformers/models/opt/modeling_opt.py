@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ PyTorch OPT model."""
+import time
+import copy
 import random
 from typing import List, Optional, Tuple, Union
 
@@ -520,6 +522,12 @@ class OPTDecoder(OPTPreTrainedModel):
             self.final_layer_norm = None
 
         self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+
+        # layer_list = [OPTDecoderLayer(config)]
+        # for _ in range(config.num_hidden_layers - 1):
+        #     layer_list.append(copy.deepcopy(layer_list[-1]))
+
+        # self.layers = nn.ModuleList(layer_list)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing

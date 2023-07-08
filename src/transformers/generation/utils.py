@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+import os
+import numpy as np
+
 import copy
 import inspect
 import warnings
@@ -1158,6 +1162,9 @@ class GenerationMixin:
         assistant_model: Optional["PreTrainedModel"] = None,
         streamer: Optional["BaseStreamer"] = None,
         stopped: Optional[List[bool]] = None,
+        intermediate_input_ids: Optional[List[torch.LongTensor]] = None,
+        resumed_kv_cache: Optional[List[Tuple]] = None,
+        resumed: Optional[bool] = None,
         **kwargs,
     ) -> Union[GenerateOutput, torch.LongTensor]:
         r"""
@@ -1531,6 +1538,9 @@ class GenerationMixin:
                 synced_gpus=synced_gpus,
                 streamer=streamer,
                 stopped=stopped,
+                intermediate_input_ids=intermediate_input_ids,
+                resumed_kv_cache=resumed_kv_cache,
+                resumed=resumed,
                 **model_kwargs,
             )
 
@@ -2185,6 +2195,9 @@ class GenerationMixin:
         synced_gpus: bool = False,
         streamer: Optional["BaseStreamer"] = None,
         stopped: Optional[List[bool]] = None,
+        intermediate_input_ids: Optional[List[torch.LongTensor]] = None,
+        resumed_kv_cache: Optional[List[Tuple]] = None,
+        resumed: Optional[bool] = None,
         **model_kwargs,
     ) -> Union[GreedySearchOutput, torch.LongTensor]:
         r"""
@@ -2324,6 +2337,8 @@ class GenerationMixin:
         unfinished_sequences = torch.ones(input_ids.shape[0], dtype=torch.long, device=input_ids.device)
 
         this_peer_finished = False  # used by synced_gpus only
+        # latency_list = []
+        i=0
         while True:
             if synced_gpus:
                 # Under synced_gpus the `forward` call must continue until all gpus complete their sequence.
@@ -2338,6 +2353,22 @@ class GenerationMixin:
             # prepare model inputs
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
+            if resumed: # use partial cache
+                past_kv_length = model_kwargs["past_key_values"][0][0].shape[-2]
+                model_inputs["input_ids"] = input_ids[:, past_kv_length:]
+                print(model_inputs["input_ids"].shape, input_ids.shape, past_kv_length)
+                resumed = False
+
+            # print model_inputs
+            # print(i)
+            # for key, value in model_inputs.items():
+            #     if value is not None:
+            #         if isinstance(value, torch.Tensor):
+            #             print(key, value.shape)
+            #         elif isinstance(value, tuple):
+            #             print(key, len(value))
+
+            # start = time.time()
             # forward pass to get next token
             outputs = self(
                 **model_inputs,
@@ -2345,6 +2376,8 @@ class GenerationMixin:
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
             )
+            # end = time.time()
+            # latency_list.append(end - start)
 
             if synced_gpus and this_peer_finished:
                 continue  # don't waste resources running the code we don't need
@@ -2385,9 +2418,18 @@ class GenerationMixin:
             input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
             if streamer is not None:
                 streamer.put(next_tokens.cpu())
+            if intermediate_input_ids is not None:
+                if len(intermediate_input_ids) == 0:
+                    intermediate_input_ids.append(input_ids.cpu().tolist())
+                else:
+                    intermediate_input_ids[0] = input_ids.cpu().tolist()
+            
             model_kwargs = self._update_model_kwargs_for_generation(
                 outputs, model_kwargs, is_encoder_decoder=self.config.is_encoder_decoder
             )
+
+            if resumed_kv_cache is not None:
+                resumed_kv_cache.append(model_kwargs["past_key_values"])
 
             # if eos_token was found in one sentence, set sentence to finished
             if eos_token_id_tensor is not None:
@@ -2408,7 +2450,23 @@ class GenerationMixin:
 
             if this_peer_finished and not synced_gpus:
                 break
+            i+=1
 
+        # print(i)
+        # # make dir to save model inputs if not exists
+        # dir_name = "kv_cache"
+        # if not os.path.exists(dir_name):
+        #     os.makedirs(dir_name)
+        # for key, value in model_inputs.items():
+        #     if key == "past_key_values" and value is not None:
+        #         print(key, len(value))
+        #         for l, v in enumerate(value):
+        #             torch.save(v[0], f"{dir_name}/layer_{l}_key.pt")
+        #             torch.save(v[1], f"{dir_name}/layer_{l}_value.pt")
+        # # latency_{model name}_{use cache}.npy
+        # model_name = self.config._name_or_path.replace("/", "_")
+        # np.save(f"latency_{model_name}_{model_kwargs['use_cache']}.npy", np.array(latency_list))
+        
         if streamer is not None:
             streamer.end()
 
