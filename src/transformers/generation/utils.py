@@ -135,6 +135,7 @@ class GenerateDecoderOnlyOutput(ModelOutput):
     attentions: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     past_key_values: Optional[Tuple[Tuple[Tuple[torch.FloatTensor]]]] = None
+    router_logits: Optional[Tuple[torch.FloatTensor]] = None
 
 
 @dataclass
@@ -2374,6 +2375,7 @@ class GenerationMixin:
         decoder_attentions = () if (return_dict_in_generate and output_attentions) else None
         cross_attentions = () if (return_dict_in_generate and output_attentions) else None
         decoder_hidden_states = () if (return_dict_in_generate and output_hidden_states) else None
+        router_logits = ()
 
         # if model is an encoder-decoder, retrieve encoder attention weights and hidden states
         if return_dict_in_generate and self.config.is_encoder_decoder:
@@ -2412,6 +2414,8 @@ class GenerationMixin:
                 continue  # don't waste resources running the code we don't need
 
             next_token_logits = outputs.logits[:, -1, :]
+
+            router_logits += (outputs.router_logits,)
 
             # pre-process distribution
             next_tokens_scores = logits_processor(input_ids, next_token_logits)
@@ -2494,6 +2498,7 @@ class GenerationMixin:
                     attentions=decoder_attentions,
                     hidden_states=decoder_hidden_states,
                     past_key_values=model_kwargs.get("past_key_values"),
+                    router_logits=router_logits,
                 )
         else:
             return input_ids
